@@ -4,6 +4,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import wandb
 import yaml
+import math
 
 from torch_lr_finder import LRFinder
 from utils.datasets import create_dataloader
@@ -44,15 +45,17 @@ def sample_lr(opt, hyp):
         else:
             pg0.append(v)  # all else
 
-    # if opt.adam:
-    #     optimizer = optim.Adam(pg0, lr=hyp['lr0'], betas=(hyp['momentum'], 0.999))  # adjust beta1 to momentum
-    # else:
     optimizer = optim.SGD(pg0, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=True)
 
     optimizer.add_param_group({'params': pg1, 'weight_decay': hyp['weight_decay']})  # add pg1 with weight_decay
     optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
     print('Optimizer groups: %g .bias, %g conv.weight, %g other' % (len(pg2), len(pg1), len(pg0)))
     del pg0, pg1, pg2
+
+    # Scheduler https://arxiv.org/pdf/1812.01187.pdf
+    # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
+    lf = lambda x: (((1 + math.cos(x * math.pi / epochs)) / 2) ** 1.0) * 0.8 + 0.2  # cosine
+    scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
 
     dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt, hyp=hyp, augment=True)
 
