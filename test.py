@@ -48,6 +48,8 @@ def test(data,
             os.makedirs(out)  # make new output folder
 
         # Remove previous
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
         for f in glob.glob(str(Path(save_dir) / 'test_batch*.jpg')):
             os.remove(f)
 
@@ -182,11 +184,14 @@ def test(data,
             stats.append((correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), tcls))
 
         # Plot images
-        if batch_i < 1:
-            f = Path(save_dir) / ('test_batch%g_gt.jpg' % batch_i)  # filename
-            plot_images(img, targets, paths, str(f), names)  # ground truth
+        # if batch_i < 1:
+            # f = Path(save_dir) / ('test_batch%g_gt.jpg' % batch_i)  # filename
+            # plot_images(img, targets, paths, str(f), names)  # ground truth
+        if batch_size > 1:
             f = Path(save_dir) / ('test_batch%g_pred.jpg' % batch_i)
-            plot_images(img, output_to_target(output, width, height), paths, str(f), names)  # predictions
+        else:
+            f = Path(save_dir) / os.path.basename(paths[0])
+        plot_images(img, output_to_target(output, width, height), paths, str(f), names)  # predictions
 
     # Compute statistics
     stats = [np.concatenate(x, 0) for x in zip(*stats)]  # to numpy
@@ -251,7 +256,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch-size', type=int, default=32, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.65, help='IOU threshold for NMS')
+    parser.add_argument('--iou-thres', type=float, default=0.6, help='IOU threshold for NMS')
     parser.add_argument('--save-json', action='store_true', help='save a cocoapi-compatible JSON results file')
     parser.add_argument('--task', default='val', help="'val', 'test', 'study'")
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
@@ -260,6 +265,7 @@ if __name__ == '__main__':
     parser.add_argument('--merge', action='store_true', help='use Merge NMS')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
     parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--save-dir', default='results', help='Directory to save results to')
     opt = parser.parse_args()
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
@@ -275,8 +281,8 @@ if __name__ == '__main__':
              opt.save_json,
              opt.single_cls,
              opt.augment,
-             opt.verbose)
-
+             opt.verbose,
+             save_dir=opt.save_dir)
     elif opt.task == 'study':  # run over a range of settings and save/plot
         for weights in ['']:
             f = 'study_%s_%s.txt' % (Path(opt.data).stem, Path(weights).stem)  # filename to save to
