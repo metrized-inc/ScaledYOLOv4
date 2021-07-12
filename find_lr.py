@@ -16,17 +16,18 @@ import torch.optim.lr_scheduler as lr_scheduler
 from utils.general import compute_loss, labels_to_class_weights
 
 imgsz = 480
-batch_size = 2
+batch_size = 6
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class CustomTrainIter(TrainDataLoaderIter):
     def inputs_labels_from_batch(self, batch_data):
         imgs, targets, paths, _ = batch_data
-        imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+        imgs = imgs.to(device, non_blocking=True).half() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
         targets = targets.to(device)
         return imgs, targets
 
 def sample_lr(opt, hyp):
+    scaler = amp.GradScaler(enabled=True)
     # get data from .yaml file
     with open(opt.data) as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)
@@ -41,6 +42,7 @@ def sample_lr(opt, hyp):
     state_dict = ckpt['model'].float().state_dict()  # to FP32
     state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
     model.load_state_dict(state_dict, strict=False)  # load
+    model.half() # FP16
 
     # Model params
     hyp['cls'] *= nc / 80.  # scale coco-tuned hyp['cls'] to current dataset
@@ -82,6 +84,7 @@ def sample_lr(opt, hyp):
     # Loss (criterion)
     def loss_wrapper(p, targets):
         loss, loss_items = compute_loss(p, targets, model)
+        loss = scaler.scale(loss)
         return loss
     criterion = loss_wrapper
 
