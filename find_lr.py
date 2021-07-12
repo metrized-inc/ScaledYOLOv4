@@ -6,14 +6,25 @@ import wandb
 import yaml
 import math
 
-from torch_lr_finder import LRFinder
+from torch_lr_finder import LRFinder, TrainDataLoaderIter
 from utils.datasets import create_dataloader
 from models.yolo import Model
 from utils.torch_utils import intersect_dicts
+from torch.cuda import amp
+
+import torch.optim.lr_scheduler as lr_scheduler
+from utils.general import compute_loss, labels_to_class_weights
 
 imgsz = 480
-batch_size = 8
+batch_size = 2
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+class CustomTrainIter(TrainDataLoaderIter):
+    def inputs_labels_from_batch(self, batch_data):
+        imgs, targets, paths, _ = batch_data
+        imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+        targets = targets.to(device)
+        return imgs, targets
 
 def sample_lr(opt, hyp):
     # get data from .yaml file
@@ -21,6 +32,7 @@ def sample_lr(opt, hyp):
         data_dict = yaml.load(f, Loader=yaml.FullLoader)
     train_path = data_dict['train']
     nc = int(data_dict['nc'])
+    names = data_dict['names']
 
     # load model
     ckpt = torch.load(opt.weights, map_location=device)  # load checkpoint
@@ -29,6 +41,21 @@ def sample_lr(opt, hyp):
     state_dict = ckpt['model'].float().state_dict()  # to FP32
     state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
     model.load_state_dict(state_dict, strict=False)  # load
+
+    # Model params
+    hyp['cls'] *= nc / 80.  # scale coco-tuned hyp['cls'] to current dataset
+    model.nc = nc  # attach number of classes to model
+    model.hyp = hyp  # attach hyperparameters to model
+    model.gr = 1.0  # giou loss ratio (obj_loss = 1.0 or giou)
+    model.names = names
+    gs = int(max(model.stride))  # grid size (max stride)
+
+    # Dataset
+    dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt, hyp=hyp, augment=True)
+    custom_train_iter = CustomTrainIter(dataloader)
+
+    # More model params
+    model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device)  # attach class weights
 
     # Optimizer
     nbs = 64  # nominal batch size
@@ -52,31 +79,19 @@ def sample_lr(opt, hyp):
     print('Optimizer groups: %g .bias, %g conv.weight, %g other' % (len(pg2), len(pg1), len(pg0)))
     del pg0, pg1, pg2
 
-    # Scheduler https://arxiv.org/pdf/1812.01187.pdf
-    # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
-    lf = lambda x: (((1 + math.cos(x * math.pi / epochs)) / 2) ** 1.0) * 0.8 + 0.2  # cosine
-    scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
+    # Loss (criterion)
+    def loss_wrapper(p, targets):
+        loss, loss_items = compute_loss(p, targets, model)
+        return loss
+    criterion = loss_wrapper
 
-    dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt, hyp=hyp, augment=True)
+    run = wandb.init(project = 'ScaledYOLOv4', entity = 'michelle-aubin', job_type = 'lr_tuning')
 
-    run = wandb.init(
-        project=settings["project"],
-        entity=settings["entity"],
-        job_type="lr tuning",
-    )
-
-
-    # Choose optimizer settings
-    optimizer = optim.SGD(model.parameters(), lr=args.start_lr)
-    criterion = eval(settings["loss_function"])  # Loss function
     lr_finder = LRFinder(model, optimizer, criterion, device="cuda")
-    lr_finder.range_test(dataloader, end_lr=args.end_lr, num_iter=args.num_iter)
+    lr_finder.range_test(custom_train_iter, start_lr=opt.start_lr, end_lr=opt.end_lr, num_iter=opt.num_iter)
 
     for x, y in zip(lr_finder.history["lr"], lr_finder.history["loss"]):
         wandb.log({"lr": x, "loss": y})
-
-    # Save the settings file 
-    logSettingsFile(wandb.run.dir, args.settings_path, settings)
 
     run.finish()
 
