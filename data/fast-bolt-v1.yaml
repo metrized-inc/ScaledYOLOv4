@@ -1,0 +1,9 @@
+# train and val datasets (image directory or *.txt file with image paths)
+train: ../data/fast-bolt-YOLOv5/train.txt
+val: ../data/fast-bolt-YOLOv5/valid.txt 
+
+# number of classes
+nc: 2
+
+# class names
+names: ['fastener', 'bolt']

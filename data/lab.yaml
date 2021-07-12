@@ -1,0 +1,10 @@
+# train and val datasets (image directory or *.txt file with image paths)
+train: ../data/fod_lab_simulated_v1-YOLOv5/train.txt
+val: ../data/fod_lab_simulated_v1-YOLOv5/valid.txt 
+test: ../data/FOD_LAB-YOLOv5/images
+
+# number of classes
+nc: 1
+
+# class names
+names: ['anomaly']
